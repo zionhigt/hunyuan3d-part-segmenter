@@ -25,11 +25,11 @@ logger = logging.getLogger("batch")
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Batch-segment all GLBs under input/.")
     p.add_argument("--config", default=None)
+    p.add_argument("--hy3d-part-root", default=None)
+    p.add_argument("--p3sam-ckpt-path", default=None)
     p.add_argument("--input-dir", default=None)
     p.add_argument("--output-dir", default=None)
-    p.add_argument("--enable-xpart", action="store_true")
     p.add_argument("--export-mode", choices=["merged", "split"], default=None)
-    p.add_argument("--device", default=None, choices=["cuda", "cpu"])
     p.add_argument("--log-level", default=None)
     p.add_argument(
         "--force",
@@ -57,16 +57,17 @@ def _already_done(output_dir: Path, stem: str, mode: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     cfg = load_config(args.config)
-    overrides: dict[str, object] = {
-        "input_dir": args.input_dir,
-        "output_dir": args.output_dir,
-        "export_mode": args.export_mode,
-        "device": args.device,
-        "log_level": args.log_level,
-    }
-    if args.enable_xpart:
-        overrides["enable_xpart"] = True
-    cfg = apply_overrides(cfg, overrides)
+    cfg = apply_overrides(
+        cfg,
+        {
+            "hy3d_part_root": args.hy3d_part_root,
+            "p3sam_ckpt_path": args.p3sam_ckpt_path,
+            "input_dir": args.input_dir,
+            "output_dir": args.output_dir,
+            "export_mode": args.export_mode,
+            "log_level": args.log_level,
+        },
+    )
     _configure_logging(cfg.log_level)
 
     input_dir = cfg.resolved_input_dir()
@@ -80,10 +81,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         segmenter = PartSegmenter(
-            p3sam_model_path=cfg.p3sam_model_path,
-            xpart_model_path=cfg.xpart_model_path if cfg.enable_xpart else None,
-            enable_xpart=cfg.enable_xpart,
-            device=cfg.device,
+            hy3d_part_root=cfg.hy3d_part_root,
+            p3sam_ckpt_path=cfg.p3sam_ckpt_path,
+            python_executable=cfg.python_executable,
+            point_num=cfg.p3sam_point_num,
+            threshold=cfg.p3sam_threshold,
+            seed=cfg.p3sam_seed,
+            clean_mesh=cfg.p3sam_clean_mesh,
+            post_process=cfg.p3sam_post_process,
         )
     except UpstreamNotInstalled as exc:
         logger.error("%s", exc)

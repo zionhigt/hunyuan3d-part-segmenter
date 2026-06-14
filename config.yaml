@@ -2,18 +2,19 @@
 # All paths are relative to the project root unless absolute.
 # CLI flags override these values.
 
-# HuggingFace repo id (or local path) holding P3-SAM weights.
-p3sam_model_path: "tencent/Hunyuan3D-Part"
+# Path to a local clone of https://github.com/Tencent-Hunyuan/Hunyuan3D-Part
+# This project shells out to <hy3d_part_root>/P3-SAM/demo/auto_mask.py.
+# See INSTALL.md.
+hy3d_part_root: "C:/Users/Shadow/Hunyuan3D-Part"
 
-# HuggingFace repo id (or local path) holding X-Part (light) weights.
-# Only used when enable_xpart is true.
-xpart_model_path: "tencent/Hunyuan3D-Part"
+# Path to the P3-SAM checkpoint (the file the demo script expects via --ckpt_path).
+# Typically <hy3d_part_root>/P3-SAM/weights/p3sam.safetensors  (or last.ckpt).
+p3sam_ckpt_path: "C:/Users/Shadow/Hunyuan3D-Part/P3-SAM/weights/p3sam.safetensors"
 
-# Whether to run X-Part after P3-SAM to regenerate clean parts.
-# X-Part is heavier and the public release is the *light* variant,
-# recommended on AI-generated / scanned meshes only.
-# WARNING: may OOM on dense meshes with 20 GB VRAM.
-enable_xpart: false
+# Python interpreter used to launch the upstream demo script.
+# Empty => use the current interpreter (sys.executable).
+# Override if the upstream script must run in a different conda env.
+python_executable: ""
 
 # Export mode:
 #   merged -> single GLB containing each part as a named submesh
@@ -25,8 +26,12 @@ export_mode: "merged"
 input_dir: "input"
 output_dir: "output"
 
-# Compute device. "cuda" or "cpu". CPU is unusable in practice for P3-SAM.
-device: "cuda"
+# P3-SAM CLI knobs forwarded to demo/auto_mask.py (see upstream README).
+p3sam_point_num: 100000
+p3sam_threshold: 0.95
+p3sam_seed: 42
+p3sam_clean_mesh: 1     # 1 = let upstream clean the mesh before segmentation
+p3sam_post_process: 0
 
 # Logging verbosity: DEBUG / INFO / WARNING / ERROR
 log_level: "INFO"

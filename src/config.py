@@ -5,7 +5,7 @@ Loads `config.yaml`, applies CLI overrides, exposes a typed dataclass.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +18,20 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
 @dataclass
 class Config:
-    p3sam_model_path: str = "tencent/Hunyuan3D-Part"
-    xpart_model_path: str = "tencent/Hunyuan3D-Part"
-    enable_xpart: bool = False
+    hy3d_part_root: str = ""
+    p3sam_ckpt_path: str = ""
+    python_executable: str = ""
+
     export_mode: str = "merged"
     input_dir: str = "input"
     output_dir: str = "output"
-    device: str = "cuda"
+
+    p3sam_point_num: int = 100000
+    p3sam_threshold: float = 0.95
+    p3sam_seed: int = 42
+    p3sam_clean_mesh: int = 1
+    p3sam_post_process: int = 0
+
     log_level: str = "INFO"
 
     def validate(self) -> None:
@@ -32,10 +39,18 @@ class Config:
             raise ValueError(
                 f"export_mode must be 'merged' or 'split', got {self.export_mode!r}"
             )
-        if self.device not in {"cuda", "cpu"}:
-            raise ValueError(f"device must be 'cuda' or 'cpu', got {self.device!r}")
         if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
             raise ValueError(f"invalid log_level: {self.log_level!r}")
+        if not self.hy3d_part_root:
+            raise ValueError(
+                "hy3d_part_root is empty — set it to your local clone of "
+                "Tencent-Hunyuan/Hunyuan3D-Part (see INSTALL.md)."
+            )
+        if not self.p3sam_ckpt_path:
+            raise ValueError(
+                "p3sam_ckpt_path is empty — point it at p3sam.safetensors "
+                "(or last.ckpt) (see INSTALL.md §4 Poids)."
+            )
 
     def resolved_input_dir(self) -> Path:
         return _resolve(self.input_dir)

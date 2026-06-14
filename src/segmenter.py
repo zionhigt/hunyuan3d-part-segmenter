@@ -1,21 +1,33 @@
-"""PartSegmenter — thin wrapper around Tencent Hunyuan3D-Part (P3-SAM + optional X-Part).
+"""PartSegmenter — orchestrates Tencent Hunyuan3D-Part / P3-SAM by shelling out
+to the upstream `demo/auto_mask.py` script.
 
-This module does NOT reimplement the models. It imports the upstream package
-(installed separately, see INSTALL.md) and orchestrates the segmentation of
-a single GLB into a list of `trimesh.Trimesh` parts.
+Why subprocess and not in-process import?
+The upstream repo is a collection of demo scripts (no setup.py, no package),
+and the model file lives at `P3-SAM/model.py` with a `demo/` folder importing
+it via relative path tricks. Wrapping it in a subprocess is the only stable
+contract Tencent actually documents.
 
-Upstream API surface is not stable across releases — we therefore probe a few
-known entry points and surface a clear error if none matches.
+The script writes alongside its `--output_path` stem:
+    <stem>.glb            (cleaned/segmented mesh, vertex-colored)
+    <stem>.ply            (same, PLY)
+    <stem>_aabb.npy       (per-part axis-aligned bounding boxes)
+    <stem>_face_ids.npy   (one int per face = part id)
+
+We load `<stem>.glb` + `<stem>_face_ids.npy` and split the mesh by label.
+
+X-Part is NOT supported here: the upstream README marks its public weights as
+TODO. When/if Tencent ships them, add an X-Part stage in this file.
 """
 
 from __future__ import annotations
 
-import importlib
 import logging
+import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import trimesh
@@ -25,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 class UpstreamNotInstalled(RuntimeError):
-    """Raised when Tencent's Hunyuan3D-Part package can't be imported."""
+    """Raised when Tencent's Hunyuan3D-Part repo or P3-SAM weights are missing."""
 
 
 @dataclass
@@ -36,179 +48,106 @@ class SegmentedPart:
 
 
 class PartSegmenter:
-    """Load P3-SAM (+ optional X-Part) and segment a GLB into named parts."""
+    """Segment a GLB by invoking P3-SAM's demo/auto_mask.py."""
 
     def __init__(
         self,
-        p3sam_model_path: str,
-        xpart_model_path: str | None = None,
-        enable_xpart: bool = False,
-        device: str = "cuda",
+        hy3d_part_root: str | Path,
+        p3sam_ckpt_path: str | Path,
+        python_executable: str = "",
+        point_num: int = 100000,
+        threshold: float = 0.95,
+        seed: int = 42,
+        clean_mesh: int = 1,
+        post_process: int = 0,
     ) -> None:
-        self.p3sam_model_path = p3sam_model_path
-        self.xpart_model_path = xpart_model_path
-        self.enable_xpart = enable_xpart
-        self.device = device
+        self.hy3d_part_root = Path(hy3d_part_root)
+        self.demo_script = self.hy3d_part_root / "P3-SAM" / "demo" / "auto_mask.py"
+        self.ckpt_path = Path(p3sam_ckpt_path)
+        self.python = python_executable or sys.executable
 
-        self._p3sam: Any | None = None
-        self._xpart: Any | None = None
-
-        self._load_p3sam()
-        if enable_xpart:
-            self._load_xpart()
-
-    # -------- model loading --------
-
-    def _load_p3sam(self) -> None:
-        module = _try_import_any(["P3SAM", "p3sam", "hunyuan3d_part.p3sam"])
-        if module is None:
+        if not self.demo_script.is_file():
             raise UpstreamNotInstalled(
-                "Could not import P3-SAM. Install Tencent Hunyuan3D-Part first "
-                "(see INSTALL.md, section 4)."
+                f"P3-SAM script not found at {self.demo_script}. "
+                "Clone https://github.com/Tencent-Hunyuan/Hunyuan3D-Part and set "
+                "hy3d_part_root (see INSTALL.md)."
             )
-        ctor = _resolve_callable(
-            module,
-            ["P3SAM", "P3SAMPredictor", "Predictor", "build_p3sam", "load_model"],
-        )
-        if ctor is None:
+        if not self.ckpt_path.is_file():
             raise UpstreamNotInstalled(
-                f"Imported {module.__name__} but found no known P3-SAM entry "
-                "point. Upstream API may have changed — check the repo README."
+                f"P3-SAM checkpoint not found at {self.ckpt_path}. "
+                "Download p3sam.safetensors from "
+                "https://huggingface.co/tencent/Hunyuan3D-Part (see INSTALL.md §4)."
             )
-        logger.info("Loading P3-SAM from %s", self.p3sam_model_path)
-        t0 = time.time()
-        self._p3sam = _instantiate(ctor, self.p3sam_model_path, self.device)
-        logger.info("P3-SAM loaded in %.2fs", time.time() - t0)
 
-    def _load_xpart(self) -> None:
-        module = _try_import_any(["XPart", "xpart", "hunyuan3d_part.xpart"])
-        if module is None:
-            raise UpstreamNotInstalled(
-                "enable_xpart=True but X-Part is not importable. Install the "
-                "X-Part component from Hunyuan3D-Part (see INSTALL.md)."
-            )
-        ctor = _resolve_callable(
-            module,
-            ["XPart", "XPartPredictor", "Predictor", "build_xpart", "load_model"],
-        )
-        if ctor is None:
-            raise UpstreamNotInstalled(
-                f"Imported {module.__name__} but found no known X-Part entry point."
-            )
-        logger.info("Loading X-Part from %s", self.xpart_model_path)
-        t0 = time.time()
-        self._xpart = _instantiate(ctor, self.xpart_model_path, self.device)
-        logger.info("X-Part loaded in %.2fs", time.time() - t0)
-
-    # -------- public API --------
+        self.point_num = point_num
+        self.threshold = threshold
+        self.seed = seed
+        self.clean_mesh = clean_mesh
+        self.post_process = post_process
 
     def segment(self, glb_path: str | Path) -> list[SegmentedPart]:
-        """Segment a GLB into parts. Returns a list of SegmentedPart."""
-        glb_path = Path(glb_path)
+        glb_path = Path(glb_path).resolve()
         if not glb_path.is_file():
             raise FileNotFoundError(glb_path)
 
         logger.info("Segmenting %s", glb_path.name)
-        scene_or_mesh = trimesh.load(str(glb_path), force="mesh", process=False)
-        mesh = _as_single_mesh(scene_or_mesh)
-        logger.info("Input mesh: %d vertices / %d faces", len(mesh.vertices), len(mesh.faces))
-
         t0 = time.time()
-        peak_mb = _reset_vram_peak()
 
-        labels = self._run_p3sam(mesh)
-        parts = _split_by_labels(mesh, labels)
+        with tempfile.TemporaryDirectory(prefix="p3sam_") as td:
+            out_stem = Path(td) / "out"
+            cmd = [
+                self.python,
+                str(self.demo_script),
+                "--ckpt_path", str(self.ckpt_path),
+                "--mesh_path", str(glb_path),
+                "--output_path", str(out_stem),
+                "--point_num", str(self.point_num),
+                "--threshold", str(self.threshold),
+                "--seed", str(self.seed),
+                "--clean_mesh", str(self.clean_mesh),
+                "--post_process", str(self.post_process),
+                "--save_mid_res", "0",
+                "--show_info", "0",
+            ]
+            logger.debug("running: %s", " ".join(cmd))
+            try:
+                subprocess.run(
+                    cmd,
+                    cwd=str(self.demo_script.parent),
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"P3-SAM auto_mask.py exited with code {exc.returncode}"
+                ) from exc
 
-        if self.enable_xpart and self._xpart is not None:
-            parts = [self._run_xpart(p) for p in parts]
+            out_glb = Path(str(out_stem) + ".glb")
+            face_ids_path = Path(str(out_stem) + "_face_ids.npy")
+            if not out_glb.is_file() or not face_ids_path.is_file():
+                raise RuntimeError(
+                    "P3-SAM did not produce expected outputs "
+                    f"({out_glb.name}, {face_ids_path.name}) in {td}"
+                )
 
-        elapsed = time.time() - t0
-        peak_mb_after = _read_vram_peak(peak_mb)
+            segmented_mesh = _as_single_mesh(
+                trimesh.load(str(out_glb), force="mesh", process=False)
+            )
+            face_ids = np.load(face_ids_path).astype(np.int64).reshape(-1)
+
+        parts = _split_by_labels(segmented_mesh, face_ids)
         logger.info(
-            "Segmentation done in %.2fs — %d parts — VRAM peak ~%s",
-            elapsed,
+            "Segmentation done in %.2fs — %d parts (mesh %d faces)",
+            time.time() - t0,
             len(parts),
-            f"{peak_mb_after:.0f} MiB" if peak_mb_after is not None else "n/a",
+            len(segmented_mesh.faces),
         )
         return [
-            SegmentedPart(mesh=m, label=_default_label(i), index=i)
+            SegmentedPart(mesh=m, label=f"part_{i:03d}", index=i)
             for i, m in enumerate(parts)
         ]
 
-    # -------- model dispatch --------
 
-    def _run_p3sam(self, mesh: trimesh.Trimesh) -> np.ndarray:
-        """Invoke P3-SAM and return a per-face integer label array."""
-        assert self._p3sam is not None
-        candidates = ("segment", "predict", "__call__", "infer", "run")
-        for name in candidates:
-            fn = getattr(self._p3sam, name, None)
-            if callable(fn):
-                logger.debug("Calling P3-SAM via .%s()", name)
-                result = fn(mesh)
-                return _extract_face_labels(result, n_faces=len(mesh.faces))
-        raise RuntimeError(
-            f"P3-SAM object {type(self._p3sam).__name__} exposes none of "
-            f"{candidates}. Upstream API may have changed."
-        )
-
-    def _run_xpart(self, part: trimesh.Trimesh) -> trimesh.Trimesh:
-        assert self._xpart is not None
-        candidates = ("regenerate", "decompose", "predict", "__call__", "run")
-        for name in candidates:
-            fn = getattr(self._xpart, name, None)
-            if callable(fn):
-                logger.debug("Calling X-Part via .%s()", name)
-                out = fn(part)
-                return _as_single_mesh(out)
-        raise RuntimeError(
-            f"X-Part object {type(self._xpart).__name__} exposes none of "
-            f"{candidates}."
-        )
-
-
-# ---------------- helpers ----------------
-
-
-def _try_import_any(names: list[str]) -> Any | None:
-    for n in names:
-        try:
-            return importlib.import_module(n)
-        except ImportError:
-            continue
-    return None
-
-
-def _resolve_callable(module: Any, names: list[str]) -> Any | None:
-    for n in names:
-        obj = getattr(module, n, None)
-        if callable(obj):
-            return obj
-    return None
-
-
-def _instantiate(ctor: Any, model_path: str, device: str) -> Any:
-    """Try a few common signatures used by upstream classes."""
-    attempts = [
-        lambda: ctor(model_path=model_path, device=device),
-        lambda: ctor(pretrained=model_path, device=device),
-        lambda: ctor(model_path, device=device),
-        lambda: ctor(model_path),
-        lambda: ctor(),
-    ]
-    last_err: Exception | None = None
-    for fn in attempts:
-        try:
-            return fn()
-        except TypeError as exc:
-            last_err = exc
-            continue
-    raise RuntimeError(
-        f"Could not instantiate {ctor!r} with known signatures. Last error: {last_err}"
-    )
-
-
-def _as_single_mesh(obj: Any) -> trimesh.Trimesh:
+def _as_single_mesh(obj: object) -> trimesh.Trimesh:
     if isinstance(obj, trimesh.Trimesh):
         return obj
     if isinstance(obj, trimesh.Scene):
@@ -216,40 +155,20 @@ def _as_single_mesh(obj: Any) -> trimesh.Trimesh:
         if not geoms:
             raise ValueError("Scene contains no geometry")
         return trimesh.util.concatenate(geoms)
-    if isinstance(obj, (list, tuple)) and obj and isinstance(obj[0], trimesh.Trimesh):
-        return trimesh.util.concatenate(list(obj))
     raise TypeError(f"Cannot coerce {type(obj).__name__} to a single Trimesh")
 
 
-def _extract_face_labels(result: Any, n_faces: int) -> np.ndarray:
-    """Coerce whatever the upstream model returned into a (n_faces,) int array."""
-    if isinstance(result, np.ndarray):
-        arr = result
-    elif isinstance(result, dict):
-        for key in ("face_labels", "labels", "segmentation", "seg"):
-            if key in result:
-                arr = np.asarray(result[key])
-                break
-        else:
-            raise ValueError(f"Unrecognized P3-SAM output dict keys: {list(result)}")
-    elif hasattr(result, "cpu"):
-        arr = result.cpu().numpy()
-    else:
-        arr = np.asarray(result)
-
-    arr = arr.astype(np.int64).reshape(-1)
-    if arr.size != n_faces:
+def _split_by_labels(
+    mesh: trimesh.Trimesh, labels: np.ndarray
+) -> list[trimesh.Trimesh]:
+    if labels.size != len(mesh.faces):
         raise ValueError(
-            f"P3-SAM returned {arr.size} labels but mesh has {n_faces} faces"
+            f"face_ids length {labels.size} != mesh faces {len(mesh.faces)}"
         )
-    return arr
-
-
-def _split_by_labels(mesh: trimesh.Trimesh, labels: np.ndarray) -> list[trimesh.Trimesh]:
     parts: list[trimesh.Trimesh] = []
     for lbl in np.unique(labels):
-        face_mask = labels == lbl
-        sub = mesh.submesh([np.where(face_mask)[0]], append=True)
+        face_idx = np.where(labels == lbl)[0]
+        sub = mesh.submesh([face_idx], append=True)
         if isinstance(sub, list):
             sub = trimesh.util.concatenate(sub) if sub else None
         if sub is None or len(sub.faces) == 0:
@@ -258,32 +177,3 @@ def _split_by_labels(mesh: trimesh.Trimesh, labels: np.ndarray) -> list[trimesh.
     if not parts:
         raise RuntimeError("Segmentation produced 0 parts")
     return parts
-
-
-def _default_label(i: int) -> str:
-    return f"part_{i:03d}"
-
-
-def _reset_vram_peak() -> float | None:
-    try:
-        import torch  # type: ignore
-
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
-            return 0.0
-    except ImportError:
-        pass
-    return None
-
-
-def _read_vram_peak(_sentinel: float | None) -> float | None:
-    if _sentinel is None:
-        return None
-    try:
-        import torch  # type: ignore
-
-        if torch.cuda.is_available():
-            return torch.cuda.max_memory_allocated() / 1024**2
-    except ImportError:
-        pass
-    return None
