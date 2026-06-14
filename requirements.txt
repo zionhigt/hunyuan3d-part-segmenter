@@ -1,0 +1,21 @@
+# Core
+numpy>=1.24,<2.0
+trimesh>=4.0
+pyyaml>=6.0
+tqdm>=4.66
+huggingface_hub>=0.24
+
+# Mesh / IO helpers used by trimesh exporters
+pygltflib>=1.16
+networkx>=3.0
+scipy>=1.10
+pillow>=10.0
+
+# Optional but commonly required by Hunyuan3D-Part components
+einops>=0.7
+omegaconf>=2.3
+
+# NOTE: torch / torchvision are NOT pinned here.
+# Install the CUDA wheel matching your driver before `pip install -r requirements.txt`:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# See INSTALL.md.

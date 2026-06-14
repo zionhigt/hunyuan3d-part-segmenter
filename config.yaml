@@ -1,0 +1,32 @@
+# Default configuration for hunyuan3d-part-segmenter.
+# All paths are relative to the project root unless absolute.
+# CLI flags override these values.
+
+# HuggingFace repo id (or local path) holding P3-SAM weights.
+p3sam_model_path: "tencent/Hunyuan3D-Part"
+
+# HuggingFace repo id (or local path) holding X-Part (light) weights.
+# Only used when enable_xpart is true.
+xpart_model_path: "tencent/Hunyuan3D-Part"
+
+# Whether to run X-Part after P3-SAM to regenerate clean parts.
+# X-Part is heavier and the public release is the *light* variant,
+# recommended on AI-generated / scanned meshes only.
+# WARNING: may OOM on dense meshes with 20 GB VRAM.
+enable_xpart: false
+
+# Export mode:
+#   merged -> single GLB containing each part as a named submesh
+#            (each part imports as a distinct object in Blender)
+#   split  -> one GLB per part in a subdirectory per input file
+export_mode: "merged"
+
+# I/O directories.
+input_dir: "input"
+output_dir: "output"
+
+# Compute device. "cuda" or "cpu". CPU is unusable in practice for P3-SAM.
+device: "cuda"
+
+# Logging verbosity: DEBUG / INFO / WARNING / ERROR
+log_level: "INFO"
