@@ -1,6 +1,8 @@
 # hunyuan3d-part-segmenter
 
-Maillon de **segmentation par parties** d'un mesh 3D (GLB). Wrapper d'orchestration autour du pipeline open-source [Tencent **Hunyuan3D-Part**](https://github.com/Tencent-Hunyuan/Hunyuan3D-Part) : **P3-SAM** pour la détection/segmentation, **X-Part** (optionnel) pour la régénération propre des parties. Ce projet est **indépendant** : il n'importe aucun code d'un autre maillon du pipeline. Le contrat est strictement basé sur des fichiers : un GLB monobloc en entrée, un (ou des) GLB(s) segmenté(s) en sortie — directement exploitables pour le rigging.
+Maillon de **segmentation par parties** d'un mesh 3D (GLB). Wrapper **subprocess** au-dessus du script officiel [P3-SAM `demo/auto_mask.py`](https://github.com/Tencent-Hunyuan/Hunyuan3D-Part/tree/main/P3-SAM) de Tencent. Ce projet est **indépendant** : il n'importe aucun code d'un autre maillon du pipeline et ne ré-implémente pas le modèle. Le contrat est strictement fichier : un GLB monobloc en entrée, un (ou des) GLB(s) segmenté(s) en sortie — directement exploitables pour le rigging.
+
+> **X-Part n'est pas supporté** : les poids publics sont marqués `TODO` dans le README X-Part upstream. P3-SAM seul suffit pour produire des parties exploitables.
 
 ## Flux macro
 
@@ -8,7 +10,7 @@ Maillon de **segmentation par parties** d'un mesh 3D (GLB). Wrapper d'orchestrat
 [projet génération hy3d]  →  GLB monobloc
       │  (fichier, pas d'import)
       ▼
-[CE PROJET]  P3-SAM (+ X-Part option)  →  GLB multi-parties nommées
+[CE PROJET]  P3-SAM (via subprocess sur auto_mask.py)  →  GLB multi-parties nommées
       │  (fichier, pas d'import)
       ▼
 [projet rigging Blender headless]  →  armature, pivots, export Godot
@@ -19,44 +21,59 @@ Maillon de **segmentation par parties** d'un mesh 3D (GLB). Wrapper d'orchestrat
 ```bash
 conda activate hy3d-part
 python src/check_env.py                     # diagnostic torch/CUDA/VRAM
+# 1. Configure hy3d_part_root et p3sam_ckpt_path dans config.yaml
 python src/single.py --glb input/vehicle.glb
 python src/batch.py                         # traite tout input/
-python src/single.py --glb input/vehicle.glb --enable-xpart   # ajoute X-Part
+python src/single.py --glb input/vehicle.glb --export-mode split
 ```
 
-Installation complète (Windows 11 / Shadow Power) : voir [`INSTALL.md`](./INSTALL.md).
+Installation complète (Windows 11 / Shadow Power) : voir [`INSTALL.md`](./INSTALL.md). **Important** : `pip install -r requirements.txt` de ce projet **n'installe pas** Hunyuan3D-Part — il y a une procédure à part (Sonata, build du kernel CUDA `chamfer3D`, poids P3-SAM via HuggingFace), tout est dans `INSTALL.md` §4.
 
 ## Paramètres `config.yaml`
 
-| Clé                | Type    | Défaut                       | Rôle |
-|--------------------|---------|------------------------------|------|
-| `p3sam_model_path` | str     | `tencent/Hunyuan3D-Part`     | Repo HF (ou chemin local) des poids P3-SAM. |
-| `xpart_model_path` | str     | `tencent/Hunyuan3D-Part`     | Repo HF (ou chemin local) des poids X-Part *light*. |
-| `enable_xpart`     | bool    | `false`                      | Active l'étape X-Part (plus lourd, risque OOM). |
-| `export_mode`      | str     | `merged`                     | `merged` = un GLB multi-parties nommées ; `split` = un GLB par partie. |
-| `input_dir`        | str     | `input`                      | Dossier source des `.glb`. |
-| `output_dir`       | str     | `output`                     | Dossier de sortie. |
-| `device`           | str     | `cuda`                       | `cuda` ou `cpu` (cpu inutilisable en pratique). |
-| `log_level`        | str     | `INFO`                       | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+| Clé                 | Type    | Défaut                                                         | Rôle |
+|---------------------|---------|----------------------------------------------------------------|------|
+| `hy3d_part_root`    | str     | `C:/Users/Shadow/Hunyuan3D-Part`                               | Racine du clone local du repo Tencent. |
+| `p3sam_ckpt_path`   | str     | `.../P3-SAM/weights/p3sam.safetensors`                         | Chemin vers le checkpoint P3-SAM. |
+| `python_executable` | str     | `""` (= interpréteur courant)                                  | Forcer un autre `python` pour lancer `auto_mask.py`. |
+| `export_mode`       | str     | `merged`                                                       | `merged` = un GLB multi-parties nommées ; `split` = un GLB par partie. |
+| `input_dir`         | str     | `input`                                                        | Dossier source des `.glb`. |
+| `output_dir`        | str     | `output`                                                       | Dossier de sortie. |
+| `p3sam_point_num`   | int     | `100000`                                                       | Sampling P3-SAM. Baisser pour réduire VRAM. |
+| `p3sam_threshold`   | float   | `0.95`                                                         | Seuil de fusion des parties. |
+| `p3sam_seed`        | int     | `42`                                                           | Graine. |
+| `p3sam_clean_mesh`  | int     | `1`                                                            | Laisser P3-SAM nettoyer le mesh avant segmentation. |
+| `p3sam_post_process`| int     | `0`                                                            | Post-traitement P3-SAM. |
+| `log_level`         | str     | `INFO`                                                         | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
-Toute clé peut être surchargée en CLI (`--enable-xpart`, `--export-mode split`, etc.).
+Toute clé peut être surchargée en CLI (`--export-mode split`, `--hy3d-part-root ...`, etc.).
 
 ## Modes d'export
 
-- **`merged`** : un seul fichier `<stem>.glb` contenant chaque partie comme **mesh distinct nommé** (`part_000`, `part_001`, … ou labels sémantiques quand disponibles). À l'import dans Blender, chaque partie devient un objet distinct.
-- **`split`** : un sous-dossier `<output>/<stem>/` contenant un GLB par partie. Pratique pour le diff ou la régénération individuelle.
+- **`merged`** : un seul fichier `<stem>.glb` contenant chaque partie comme **mesh distinct nommé** (`part_000`, `part_001`, …). À l'import dans Blender, chaque partie devient un objet distinct.
+- **`split`** : un sous-dossier `<output>/<stem>/` contenant un GLB par partie.
 
 > Note nommage : P3-SAM expose des indices de parties, pas des labels sémantiques fins (« roue avant gauche »). Les noms sémantiques restent à affiner en aval (pipeline rigging).
 
+## Comment ça marche
+
+Pour chaque GLB en entrée, ce projet :
+
+1. Lance `<hy3d_part_root>/P3-SAM/demo/auto_mask.py` via `subprocess.run(...)` avec les flags lus dans `config.yaml`.
+2. Lit le mesh segmenté (`<stem>.glb`) et les `face_ids` (`<stem>_face_ids.npy`) que le script écrit dans un dossier temporaire.
+3. Découpe le mesh en sous-meshes par `face_id` et exporte selon `export_mode`.
+
+Aucun import in-process des modèles Tencent — le repo upstream n'expose pas de package Python propre, le contrat documenté est la CLI `auto_mask.py`.
+
 ## Matériel cible
 
-Pensé/testé pour **Shadow PC Power** : NVIDIA **RTX A4500 (20 Go VRAM)**, 28 Go RAM, **Windows 11 natif**. P3-SAM tient confortablement dans 20 Go ; **X-Part est plus gourmand** et peut OOM sur les meshes denses — voir le dépannage dans `INSTALL.md`. La décimation des meshes se fait en amont (côté pipeline de génération), pas ici.
+Pensé/testé pour **Shadow PC Power** : NVIDIA **RTX A4500 (20 Go VRAM)**, 28 Go RAM, **Windows 11 natif**. P3-SAM tient confortablement dans 20 Go ; pour réduire la VRAM, baisser `p3sam_point_num`. La décimation des meshes se fait en amont (côté pipeline de génération), pas ici.
 
 ## Structure
 
 ```
 src/
-  segmenter.py   # PartSegmenter (charge P3-SAM, X-Part optionnel)
+  segmenter.py   # PartSegmenter : subprocess vers auto_mask.py + split par face_id
   single.py      # CLI : 1 GLB
   batch.py       # CLI : tout input/, reprise/skip, tqdm
   export.py      # export merged / split

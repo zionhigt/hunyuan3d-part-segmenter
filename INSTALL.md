@@ -1,6 +1,8 @@
 # INSTALL — Windows 11 natif / Shadow PC Power (RTX A4500, 20 Go VRAM, 28 Go RAM)
 
-Procédure complète et reproductible sur une machine vierge. Tout le pipeline s'exécute dans un environnement conda **dédié** `hy3d-part`, **distinct** de l'environnement de génération (`hy3d`). P3-SAM/X-Part ont leurs propres poids et dépendances ; ne pas les mélanger avec l'env de génération.
+Procédure complète et reproductible sur une machine vierge. Le projet est un **wrapper subprocess** au-dessus du script officiel `P3-SAM/demo/auto_mask.py` du repo Tencent. Tout tourne dans un environnement conda **dédié** `hy3d-part`, **distinct** de l'environnement de génération (`hy3d`).
+
+> **X-Part n'est PAS supporté ici** : les poids publics sont marqués `TODO` dans le README X-Part upstream au moment de l'écriture. Ce projet utilise uniquement **P3-SAM**, ce qui est suffisant pour produire des parties exploitables pour le rigging.
 
 ---
 
@@ -8,12 +10,12 @@ Procédure complète et reproductible sur une machine vierge. Tout le pipeline s
 
 - **Miniconda** : <https://www.anaconda.com/download/success>
 - **Git pour Windows** : <https://git-scm.com/download/win>
-- **Visual Studio Build Tools 2022** — workload « *Desktop development with C++* » **complet** (nécessaire si l'un des composants doit être compilé). Cocher tout le workload, puis **redémarrer le terminal après installation** pour que `cl.exe` / `link.exe` soient sur le `PATH`. Téléchargement : <https://visualstudio.microsoft.com/visual-cpp-build-tools/>
+- **Visual Studio Build Tools 2022** — workload « *Desktop development with C++* » **complet**. Nécessaire pour compiler le kernel CUDA `chamfer3D` (étape obligatoire P3-SAM). Cocher tout le workload, puis **redémarrer le terminal** pour que `cl.exe` / `link.exe` soient sur le `PATH`. Téléchargement : <https://visualstudio.microsoft.com/visual-cpp-build-tools/>
 - **Pilote NVIDIA** : déjà présent sur Shadow. Vérifier :
   ```cmd
   nvidia-smi
   ```
-  Le chiffre « **CUDA Version** » en haut à droite = **version CUDA MAX supportée par le pilote** (pas une install CUDA, pas un wheel). Choisir un wheel PyTorch CUDA **≤ ce chiffre**. Sur Shadow Power le pilote rapporte typiquement CUDA 12.8 → tout wheel `cu124` / `cu126` convient.
+  Le chiffre « **CUDA Version** » en haut à droite = **version CUDA MAX supportée par le pilote**. La config testée upstream est **CUDA 12.1 / PyTorch 2.4.0+cu121** ; le pilote Shadow (typiquement CUDA 12.8) couvre largement.
 
 ---
 
@@ -24,18 +26,14 @@ conda create -n hy3d-part python=3.10 -y
 conda activate hy3d-part
 ```
 
-> **Insistance** : `hy3d-part` est SÉPARÉ de l'env de génération `hy3d`. Avant tout `pip install`, vérifier que le prompt affiche bien `(hy3d-part)`. Mélanger les deux environnements casse les dépendances.
+> **Insistance** : `hy3d-part` est SÉPARÉ de l'env de génération `hy3d`. Avant tout `pip install`, vérifier que le prompt affiche bien `(hy3d-part)`.
 
 ---
 
-## 3. PyTorch
-
-Sélecteur officiel : <https://pytorch.org/get-started/locally/>.
-
-Prendre la version CUDA recommandée par le `README` du repo Tencent **au moment du clone** ; à défaut, un wheel ≤ CUDA pilote (`cu124` ou `cu126`). Exemple :
+## 3. PyTorch (config testée upstream)
 
 ```cmd
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+pip install torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121
 ```
 
 Vérification :
@@ -44,11 +42,13 @@ Vérification :
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-Attendu : `... True NVIDIA RTX A4500`.
+Attendu : `2.4.0+cu121 12.1 True NVIDIA RTX A4500`.
+
+> Si tu veux dévier (cu124, etc.), vérifie d'abord la compat avec les kernels CUDA de `chamfer3D` ; en cas de doute, reste sur la combo officielle ci-dessus.
 
 ---
 
-## 4. Récupération du pipeline Hunyuan3D-Part
+## 4. Installation de Hunyuan3D-Part (P3-SAM)
 
 Liens officiels :
 - **Dépôt GitHub** : <https://github.com/Tencent-Hunyuan/Hunyuan3D-Part>
@@ -59,40 +59,70 @@ Liens officiels :
 Clés de recherche (si les URLs changent) :
 - GitHub : `Tencent-Hunyuan Hunyuan3D-Part`
 - HuggingFace : `tencent Hunyuan3D-Part`
-- Papiers : `P3-SAM Native 3D Part Segmentation` (arXiv 2509.06784), `X-Part shape decomposition` (arXiv 2509.08643)
+- Papier : `P3-SAM Native 3D Part Segmentation` (arXiv 2509.06784)
 
-### Clone + dépendances
+### 4.1 Clone
 
 ```cmd
 cd C:\Users\Shadow
 git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-Part.git
-cd Hunyuan3D-Part
-pip install -r requirements.txt
 ```
 
-> L'env `(hy3d-part)` doit être actif.
+Tu obtiens `C:\Users\Shadow\Hunyuan3D-Part\` avec à l'intérieur `P3-SAM\`, `XPart\`, etc.
 
-### Build de composants natifs (le cas échéant)
+### 4.2 Dépendance externe : Sonata (Facebook Research)
 
-Suivre le `README` du repo Tencent — ces étapes évoluent entre releases, ne pas les figer en dur. Sous Windows, **remplacer tout script `bash *.sh` de compilation par le `setup.py` correspondant** (`pip install -e .` dans le dossier du composant), à condition qu'un `setup.py` soit présent. Si la compilation casse, vérifier que les Build Tools VS 2022 « Desktop C++ » sont installés et que le terminal a été relancé après leur install.
+P3-SAM utilise le framework **Sonata**. À installer en suivant son propre README :
 
-### Poids
+```cmd
+git clone https://github.com/facebookresearch/sonata.git
+cd sonata
+REM Suivre les instructions du README Sonata pour l'install (pip install -e . dans la plupart des cas).
+```
 
-Les poids se téléchargent automatiquement via `huggingface_hub` au premier lancement dans `%USERPROFILE%\.cache\huggingface`.
+### 4.3 Dépendances pip de P3-SAM
 
-- **Rediriger le cache HF** vers un disque avec de la place (extension stockage Shadow jusqu'à 5 To) :
-  ```cmd
-  setx HF_HOME "D:\hf_cache"
-  ```
-  Fermer/rouvrir le terminal pour que la variable s'applique.
-- Si l'accès aux poids requiert l'acceptation de conditions sur HuggingFace :
-  ```cmd
-  huggingface-cli login
-  ```
+> Il n'y a **PAS** de `requirements.txt` à la racine de Hunyuan3D-Part. Les paquets sont listés dans le README de `P3-SAM/`.
 
-### Note X-Part
+```cmd
+pip install viser fpsample trimesh numba gradio
+```
 
-La version publique de X-Part est la version **light**, recommandée sur **meshes scannés ou générés par IA** (typiquement sorties Hunyuan V2.5 / V3.0). La version complète est uniquement disponible via Hunyuan3D-Studio et n'est pas couverte ici. X-Part est plus gourmand en VRAM que P3-SAM — sur 20 Go il peut OOM sur les meshes denses ; voir § Dépannage.
+### 4.4 Build du kernel CUDA `chamfer3D` (obligatoire)
+
+```cmd
+cd C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\utils\chamfer3D
+python setup.py install
+```
+
+> Échec ici = Build Tools VS 2022 « Desktop C++ » incomplets, **ou** mismatch CUDA toolkit / wheel torch. Vérifier `cl.exe` accessible (`where cl`) et que le CUDA toolkit (`nvcc --version`) correspond bien à la version cu121 de torch.
+
+### 4.5 Poids P3-SAM
+
+Téléchargement HuggingFace dans `Hunyuan3D-Part\P3-SAM\weights\` :
+
+```cmd
+huggingface-cli download tencent/Hunyuan3D-Part p3sam.safetensors --local-dir C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\weights
+```
+
+(Connecte-toi avec `huggingface-cli login` si l'accès aux poids requiert l'acceptation des conditions.)
+
+Optionnel : rediriger le cache HF vers un disque avec plus d'espace (extension stockage Shadow jusqu'à 5 To) :
+
+```cmd
+setx HF_HOME "D:\hf_cache"
+```
+
+(Fermer/rouvrir le terminal pour appliquer.)
+
+### 4.6 Test rapide de P3-SAM (en dehors de ce projet)
+
+```cmd
+cd C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\demo
+python auto_mask.py --ckpt_path ..\weights\p3sam.safetensors --mesh_path assets\1.glb --output_path results\1
+```
+
+Tu dois voir apparaître `results\1.glb` (mesh colorisé par partie), `results\1.ply`, `results\1_aabb.npy`, `results\1_face_ids.npy`. Si oui, P3-SAM est opérationnel ; on peut passer à ce projet.
 
 ---
 
@@ -105,25 +135,16 @@ cd hunyuan3d-part-segmenter
 pip install -r requirements.txt
 ```
 
-### Lier le repo Tencent à ce projet — deux options
+> Le `requirements.txt` de **ce** projet n'installe que des libs Python génériques (`trimesh`, `pyyaml`, `tqdm`, …). Il **n'installe pas** Hunyuan3D-Part — ça, c'est l'étape 4.
 
-**Option A — installation éditable (recommandée si un `setup.py` ou `pyproject.toml` racine est présent) :**
+Éditer `config.yaml` pour pointer sur ton clone Tencent et tes poids :
 
-```cmd
-pip install -e C:\Users\Shadow\Hunyuan3D-Part
+```yaml
+hy3d_part_root: "C:/Users/Shadow/Hunyuan3D-Part"
+p3sam_ckpt_path: "C:/Users/Shadow/Hunyuan3D-Part/P3-SAM/weights/p3sam.safetensors"
 ```
 
-**Option B — `PYTHONPATH` (si le repo Tencent n'expose pas de package installable) :**
-
-```cmd
-set "PYTHONPATH=C:\Users\Shadow\Hunyuan3D-Part;C:\Users\Shadow\Hunyuan3D-Part\P3-SAM;%PYTHONPATH%"
-```
-
-Persistant :
-
-```cmd
-setx PYTHONPATH "C:\Users\Shadow\Hunyuan3D-Part;C:\Users\Shadow\Hunyuan3D-Part\P3-SAM"
-```
+> Pas besoin de `PYTHONPATH` ni de `pip install -e` — ce projet **shell out** sur `auto_mask.py`, il a juste besoin du chemin vers le clone et vers le checkpoint.
 
 ---
 
@@ -133,7 +154,7 @@ setx PYTHONPATH "C:\Users\Shadow\Hunyuan3D-Part;C:\Users\Shadow\Hunyuan3D-Part\P
 python src\check_env.py
 ```
 
-Le diagnostic doit afficher : CUDA disponible, **NVIDIA RTX A4500**, ~20 Go VRAM, versions torch / CUDA, et l'importabilité des modules `P3SAM` / `XPart`.
+Le diagnostic affiche : CUDA disponible, **NVIDIA RTX A4500**, ~20 Go VRAM, versions torch / CUDA.
 
 ---
 
@@ -146,8 +167,8 @@ python src\single.py --glb input\vehicle.glb
 REM Batch sur tout input\ :
 python src\batch.py
 
-REM Activer X-Part (plus lourd) :
-python src\single.py --glb input\vehicle.glb --enable-xpart
+REM Mode split (un GLB par partie au lieu d'un GLB multi-meshes) :
+python src\single.py --glb input\vehicle.glb --export-mode split
 ```
 
 Lanceur Windows tout-en-un :
@@ -162,10 +183,13 @@ scripts\run_batch.bat
 
 | Symptôme | Cause probable | Action |
 |---|---|---|
-| `torch.cuda.is_available() == False` | mauvais wheel CUDA / pilote NVIDIA non chargé | réinstaller le wheel PyTorch correspondant à la CUDA pilote (§3) ; vérifier `nvidia-smi`. |
-| Erreur compilation `cl.exe` / `link.exe` introuvable | Build Tools « Desktop C++ » incomplets ou terminal non relancé | réinstaller le workload complet, **fermer et rouvrir** le terminal. |
-| `OutOfMemoryError` sur X-Part | mesh trop dense pour 20 Go | désactiver X-Part (`--enable-xpart` retiré, P3-SAM seul suffit pour le rigging) ; ou réduire la densité du mesh en amont (paramètre de décimation côté pipeline de génération) ; ou activer un éventuel offload si proposé par le repo upstream. |
-| Cache HuggingFace sature le disque système | poids gros + cache par défaut sur `C:` | rediriger `HF_HOME` vers un autre disque (§4 Poids). |
-| Lenteur extrême (CPU fallback) | torch ne voit pas le GPU | vérifier `nvidia-smi` **pendant** l'exécution ; un GPU à 0 % indique un fallback CPU silencieux. Revoir l'install PyTorch. |
-| `UpstreamNotInstalled: Could not import P3-SAM` | repo Tencent non installé ou pas sur `PYTHONPATH` | refaire §5 option A ou B. |
-| L'env actif n'est pas `hy3d-part` | activation oubliée | `conda activate hy3d-part` ; le prompt doit afficher `(hy3d-part)`. |
+| `torch.cuda.is_available() == False` | mauvais wheel CUDA / pilote non chargé | réinstaller la combo cu121 §3 ; vérifier `nvidia-smi`. |
+| `chamfer3D` ne compile pas (`cl.exe`/`nvcc` errors) | Build Tools « Desktop C++ » incomplets, terminal non relancé, ou mismatch CUDA toolkit/torch | réinstaller le workload VS complet, fermer/rouvrir le terminal, vérifier `where cl` et `nvcc --version`. |
+| `P3-SAM script not found at .../P3-SAM/demo/auto_mask.py` | mauvais `hy3d_part_root` | vérifier le chemin dans `config.yaml`. |
+| `P3-SAM checkpoint not found` | `p3sam_ckpt_path` faux ou poids non téléchargés | refaire §4.5. |
+| `ModuleNotFoundError: sonata` (ou équivalent) en lançant `auto_mask.py` | Sonata pas installé | refaire §4.2. |
+| `OutOfMemoryError` | mesh trop dense | réduire la densité en amont (décimation côté pipeline de génération) ou baisser `p3sam_point_num` dans `config.yaml`. |
+| Cache HF sature `C:` | poids gros | rediriger `HF_HOME` (§4.5). |
+| Lenteur extrême | fallback CPU | vérifier `nvidia-smi` **pendant** l'exécution ; GPU à 0 % = fallback CPU silencieux. |
+| L'env actif n'est pas `hy3d-part` | activation oubliée | `conda activate hy3d-part`. |
+| Veux X-Part | poids upstream `TODO` | non supporté ; attendre que Tencent publie les poids X-Part puis ouvrir une issue ici. |
