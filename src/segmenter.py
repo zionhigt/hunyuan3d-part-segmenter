@@ -108,8 +108,6 @@ class PartSegmenter:
                 "--seed", str(self.seed),
                 "--clean_mesh", str(self.clean_mesh),
                 "--post_process", str(self.post_process),
-                "--save_mid_res", "0",
-                "--show_info", "0",
                 "--prompt_bs", str(self.prompt_bs),
             ]
             logger.debug("running: %s", " ".join(cmd))
