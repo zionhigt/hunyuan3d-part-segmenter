@@ -18,6 +18,11 @@ if not exist "%VCVARS%" goto :vcvars_missing
 
 call "%VCVARS%"
 
+REM PyTorch's cpp_extension verifie que DISTUTILS_USE_SDK=1 quand vcvars est
+REM deja charge, sinon il leve "It seems that the VC environment is activated
+REM but DISTUTILS_USE_SDK is not set". On le pose ici pour tout le shell.
+set DISTUTILS_USE_SDK=1
+
 set "CONDA_HOOK=%USERPROFILE%\miniconda3\Scripts\activate.bat"
 if not exist "%CONDA_HOOK%" set "CONDA_HOOK=%USERPROFILE%\anaconda3\Scripts\activate.bat"
 if not exist "%CONDA_HOOK%" goto :conda_missing
