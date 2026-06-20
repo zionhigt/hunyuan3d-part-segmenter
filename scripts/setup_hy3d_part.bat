@@ -51,6 +51,16 @@ if errorlevel 1 (
 echo === 6. Layer P3-SAM deps (viser, fpsample) ===
 REM huggingface_hub, trimesh, numba, gradio, einops, omegaconf, pyyaml, tqdm
 REM sont deja la (herites de hy3d). On ajoute juste les deux specifiques.
+REM
+REM fpsample (dernieres versions) build depuis source et exige pybind11 >= 2.14
+REM (symboles multiple_interpreters / per_interpreter_gil). hy3d herite de
+REM pybind11 2.13.4 -> bump prealable. pybind11 etant header-only, ca
+REM n'invalide pas les extensions deja compilees dans hy3d-part.
+pip install -U "pybind11>=2.14"
+if errorlevel 1 (
+    echo [ERROR] upgrade pybind11 echoue.
+    exit /b 1
+)
 pip install viser fpsample
 if errorlevel 1 (
     echo [ERROR] pip install viser/fpsample echoue.

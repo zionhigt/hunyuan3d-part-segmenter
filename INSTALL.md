@@ -246,6 +246,7 @@ Tu dois voir un process Python qui consomme de la VRAM. Si VRAM à 0 et lenteur 
 |---|---|---|
 | `conda env remove` refuse / "env in use" | env actif | `conda deactivate` d'abord, fermer les autres terminaux. |
 | Clone hy3d→hy3d-part lent | volume du clone (~Go) | normal, laisser tourner 3-5 min. |
+| `fpsample` build fail : `'multiple_interpreters' n'est pas membre de 'pybind11'` | `pybind11 2.13.4` hérité, fpsample exige ≥ 2.14 | `pip install -U "pybind11>=2.14"` puis retry. Déjà géré par `setup_hy3d_part.bat`. |
 | `torch.cuda.is_available()==False` après clone | conda a recopié partiellement | `conda env remove -n hy3d-part` puis relancer §3. |
 | `cl.exe` ou `nvcc` introuvables au build chamfer3D | shell normal, pas `dev_shell.bat` | relancer `scripts\dev_shell.bat`, refaire le build dedans. |
 | Build chamfer3D : `unsupported MSVC` | MSVC 14.44 vs CUDA 12.4 — normalement OK, sinon installer Windows 11 SDK | refaire VS Installer, ajouter Windows 11 SDK. |
