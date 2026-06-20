@@ -12,7 +12,7 @@ from pathlib import Path
 
 import trimesh
 
-from src.segmenter import SegmentedPart
+from segmenter import SegmentedPart
 
 
 logger = logging.getLogger(__name__)

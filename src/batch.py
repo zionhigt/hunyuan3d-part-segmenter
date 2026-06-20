@@ -14,9 +14,9 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from src.config import Config, apply_overrides, load_config
-from src.export import export_parts
-from src.segmenter import PartSegmenter, UpstreamNotInstalled
+from config import Config, apply_overrides, load_config
+from export import export_parts
+from segmenter import PartSegmenter, UpstreamNotInstalled
 
 
 logger = logging.getLogger("batch")

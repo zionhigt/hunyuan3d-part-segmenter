@@ -12,9 +12,9 @@ import logging
 import sys
 from pathlib import Path
 
-from src.config import Config, apply_overrides, load_config
-from src.export import export_parts
-from src.segmenter import PartSegmenter, UpstreamNotInstalled
+from config import Config, apply_overrides, load_config
+from export import export_parts
+from segmenter import PartSegmenter, UpstreamNotInstalled
 
 
 def _build_parser() -> argparse.ArgumentParser:
