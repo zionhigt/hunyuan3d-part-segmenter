@@ -9,7 +9,8 @@ hy3d_part_root: "C:/Users/Shadow/Hunyuan3D-Part"
 
 # Path to the P3-SAM checkpoint (the file the demo script expects via --ckpt_path).
 # Typically <hy3d_part_root>/P3-SAM/weights/p3sam.safetensors  (or last.ckpt).
-p3sam_ckpt_path: "C:/Users/Shadow/Hunyuan3D-Part/P3-SAM/weights/p3sam.safetensors"
+# On Shadow PC, weights live on D: to keep C: lean.
+p3sam_ckpt_path: "D:/hy3d-weights/p3sam/p3sam.safetensors"
 
 # Python interpreter used to launch the upstream demo script.
 # Empty => use the current interpreter (sys.executable).
@@ -27,11 +28,18 @@ input_dir: "input"
 output_dir: "output"
 
 # P3-SAM CLI knobs forwarded to demo/auto_mask.py (see upstream README).
-p3sam_point_num: 100000
+# point_num: 50k is a safe default for 20 GB VRAM without flash_attn; bump
+# to 100000 for max quality if VRAM allows. Patched auto_mask.py honors this
+# (Tencent's version hardcoded 100000 inside mesh_sam()).
+p3sam_point_num: 50000
 p3sam_threshold: 0.95
 p3sam_seed: 42
 p3sam_clean_mesh: 1     # 1 = let upstream clean the mesh before segmentation
 p3sam_post_process: 0
+# prompt_bs=1 is required to fit in 20 GB without flash_attn. Without the
+# patcher's prompt_bs wiring, auto_mask.py ignored this and used 32 → OOM.
+# Raise only if flash_attn is back or VRAM > 24 GB.
+p3sam_prompt_bs: 1
 
 # Logging verbosity: DEBUG / INFO / WARNING / ERROR
 log_level: "INFO"

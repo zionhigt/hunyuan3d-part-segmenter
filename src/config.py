@@ -26,11 +26,15 @@ class Config:
     input_dir: str = "input"
     output_dir: str = "output"
 
-    p3sam_point_num: int = 100000
+    p3sam_point_num: int = 50000
     p3sam_threshold: float = 0.95
     p3sam_seed: int = 42
     p3sam_clean_mesh: int = 1
     p3sam_post_process: int = 0
+    # prompt_bs=1 is required to fit in 20 GB without flash_attn (the K dim
+    # of the [N, K, 1027] fp32 seg tensor); raise only if you have a wheel
+    # for flash_attn or > 24 GB VRAM.
+    p3sam_prompt_bs: int = 1
 
     log_level: str = "INFO"
 

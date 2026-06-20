@@ -89,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=cfg.p3sam_seed,
             clean_mesh=cfg.p3sam_clean_mesh,
             post_process=cfg.p3sam_post_process,
+            prompt_bs=cfg.p3sam_prompt_bs,
         )
     except UpstreamNotInstalled as exc:
         logger.error("%s", exc)

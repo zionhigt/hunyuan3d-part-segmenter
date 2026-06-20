@@ -56,6 +56,7 @@ def run(cfg: Config, glb_path: Path) -> int:
             seed=cfg.p3sam_seed,
             clean_mesh=cfg.p3sam_clean_mesh,
             post_process=cfg.p3sam_post_process,
+            prompt_bs=cfg.p3sam_prompt_bs,
         )
     except UpstreamNotInstalled as exc:
         logging.error("%s", exc)

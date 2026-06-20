@@ -7,13 +7,13 @@ and the model file lives at `P3-SAM/model.py` with a `demo/` folder importing
 it via relative path tricks. Wrapping it in a subprocess is the only stable
 contract Tencent actually documents.
 
-The script writes alongside its `--output_path` stem:
-    <stem>.glb            (cleaned/segmented mesh, vertex-colored)
-    <stem>.ply            (same, PLY)
-    <stem>_aabb.npy       (per-part axis-aligned bounding boxes)
-    <stem>_face_ids.npy   (one int per face = part id)
-
-We load `<stem>.glb` + `<stem>_face_ids.npy` and split the mesh by label.
+`--output_path` is interpreted as a DIRECTORY by auto_mask.py. The final
+segmented outputs land at:
+    <output_path>/auto_mask_mesh_final.glb            (segmented mesh)
+    <output_path>/auto_mask_mesh_final_face_ids.npy   (one int per face)
+    <output_path>/auto_mask_mesh_final_aabb.npy       (per-part AABB)
+plus a bunch of intermediate `_org` / `_filtered_*` / `point_pca` files we
+ignore.
 
 X-Part is NOT supported here: the upstream README marks its public weights as
 TODO. When/if Tencent ships them, add an X-Part stage in this file.
@@ -55,11 +55,12 @@ class PartSegmenter:
         hy3d_part_root: str | Path,
         p3sam_ckpt_path: str | Path,
         python_executable: str = "",
-        point_num: int = 100000,
+        point_num: int = 50000,
         threshold: float = 0.95,
         seed: int = 42,
         clean_mesh: int = 1,
         post_process: int = 0,
+        prompt_bs: int = 1,
     ) -> None:
         self.hy3d_part_root = Path(hy3d_part_root)
         self.demo_script = self.hy3d_part_root / "P3-SAM" / "demo" / "auto_mask.py"
@@ -84,6 +85,7 @@ class PartSegmenter:
         self.seed = seed
         self.clean_mesh = clean_mesh
         self.post_process = post_process
+        self.prompt_bs = prompt_bs
 
     def segment(self, glb_path: str | Path) -> list[SegmentedPart]:
         glb_path = Path(glb_path).resolve()
@@ -94,13 +96,13 @@ class PartSegmenter:
         t0 = time.time()
 
         with tempfile.TemporaryDirectory(prefix="p3sam_") as td:
-            out_stem = Path(td) / "out"
+            out_dir = Path(td)
             cmd = [
                 self.python,
                 str(self.demo_script),
                 "--ckpt_path", str(self.ckpt_path),
                 "--mesh_path", str(glb_path),
-                "--output_path", str(out_stem),
+                "--output_path", str(out_dir),
                 "--point_num", str(self.point_num),
                 "--threshold", str(self.threshold),
                 "--seed", str(self.seed),
@@ -108,6 +110,7 @@ class PartSegmenter:
                 "--post_process", str(self.post_process),
                 "--save_mid_res", "0",
                 "--show_info", "0",
+                "--prompt_bs", str(self.prompt_bs),
             ]
             logger.debug("running: %s", " ".join(cmd))
             try:
@@ -121,8 +124,8 @@ class PartSegmenter:
                     f"P3-SAM auto_mask.py exited with code {exc.returncode}"
                 ) from exc
 
-            out_glb = Path(str(out_stem) + ".glb")
-            face_ids_path = Path(str(out_stem) + "_face_ids.npy")
+            out_glb = out_dir / "auto_mask_mesh_final.glb"
+            face_ids_path = out_dir / "auto_mask_mesh_final_face_ids.npy"
             if not out_glb.is_file() or not face_ids_path.is_file():
                 raise RuntimeError(
                     "P3-SAM did not produce expected outputs "
