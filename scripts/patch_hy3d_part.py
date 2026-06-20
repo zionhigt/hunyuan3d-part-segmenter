@@ -74,6 +74,17 @@ PATCH_AUTOMASK_NEW = """    # Patched by hunyuan3d-part-segmenter: was forcing p
     # point_num = 100000
     # prompt_num = 400"""
 
+# --prompt_bs is registered in argparse but never plumbed into the
+# predict_aabb(...) calls. As a result, predict_aabb's signature default
+# (prompt_bs=32) is always used, and the CLI flag is silently ignored. With
+# flash_attn disabled, the [N, prompt_bs, 1027] fp32 tensor at line ~79 of
+# the seg model is ~13 GB at default — OOM on a 20 GB GPU. We add
+# `prompt_bs=args.prompt_bs` to the call. Both call sites (the if- and
+# else- branches) share the exact same tail `clean_mesh_flag=args.clean_mesh,)`,
+# so a single str.replace patches both.
+PATCH_PROMPTBS_OLD = "clean_mesh_flag=args.clean_mesh,)"
+PATCH_PROMPTBS_NEW = "clean_mesh_flag=args.clean_mesh, prompt_bs=args.prompt_bs,)"
+
 
 def patch_file(path: Path, old: str, new: str, label: str) -> str:
     if not path.is_file():
@@ -140,6 +151,12 @@ def main() -> int:
             PATCH_AUTOMASK_OLD,
             PATCH_AUTOMASK_NEW,
             "auto_mask.py: unhardcode point_num/prompt_num",
+        ),
+        patch_file(
+            root / "P3-SAM" / "demo" / "auto_mask.py",
+            PATCH_PROMPTBS_OLD,
+            PATCH_PROMPTBS_NEW,
+            "auto_mask.py: wire --prompt_bs into predict_aabb call",
         ),
         ensure_init_py(
             root / "XPart" / "partgen" / "utils" / "__init__.py",
