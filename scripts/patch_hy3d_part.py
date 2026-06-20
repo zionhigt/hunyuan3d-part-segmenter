@@ -45,6 +45,21 @@ PATCH_P3SAM_NEW = (
     "download_root=None)"
 )
 
+# Shadow-priority patch: P3-SAM/model.py originally appends XPart/partgen to
+# sys.path. If the env was cloned from hy3d (Hunyuan3D-2.1), the clone carries
+# a .pth that injects hy3dpaint/ early in sys.path. hy3dpaint has utils/ and
+# models/ as regular packages, which win against XPart/partgen's namespace
+# packages. We switch the append to an insert(0, ...) so XPart/partgen takes
+# priority, AND we drop empty __init__.py files in XPart/partgen/{utils,models}
+# to make them regular packages too (priority over any sibling namespace).
+PATCH_SYSPATH_OLD = (
+    "sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'XPart/partgen'))"
+)
+
+PATCH_SYSPATH_NEW = (
+    "sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'XPart/partgen'))"
+)
+
 
 def patch_file(path: Path, old: str, new: str, label: str) -> str:
     if not path.is_file():
@@ -56,6 +71,15 @@ def patch_file(path: Path, old: str, new: str, label: str) -> str:
         return f"[FAIL] {label}: original snippet not found in {path}"
     path.write_text(text.replace(old, new), encoding="utf-8")
     return f"[DONE] {label}: patched {path}"
+
+
+def ensure_init_py(path: Path, label: str) -> str:
+    if not path.parent.is_dir():
+        return f"[SKIP] {label}: parent dir not found ({path.parent})"
+    if path.is_file():
+        return f"[OK]   {label}: already present"
+    path.write_text("", encoding="utf-8")
+    return f"[DONE] {label}: created {path}"
 
 
 def resolve_root(arg_root: str | None) -> Path:
@@ -90,6 +114,20 @@ def main() -> int:
             PATCH_P3SAM_OLD,
             PATCH_P3SAM_NEW,
             "P3-SAM/model.py: fix /root/sonata path",
+        ),
+        patch_file(
+            root / "P3-SAM" / "model.py",
+            PATCH_SYSPATH_OLD,
+            PATCH_SYSPATH_NEW,
+            "P3-SAM/model.py: sys.path.append -> insert(0)",
+        ),
+        ensure_init_py(
+            root / "XPart" / "partgen" / "utils" / "__init__.py",
+            "XPart/partgen/utils/__init__.py",
+        ),
+        ensure_init_py(
+            root / "XPart" / "partgen" / "models" / "__init__.py",
+            "XPart/partgen/models/__init__.py",
         ),
     ]
     print("\n".join(results))
