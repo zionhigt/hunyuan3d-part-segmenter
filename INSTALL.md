@@ -179,13 +179,15 @@ setx HF_HOME "D:\hf_cache"
 Fermer/rouvrir Anaconda Prompt, `conda activate hy3d-part`, puis :
 
 ```cmd
-huggingface-cli download tencent/Hunyuan3D-Part p3sam.safetensors --local-dir C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\weights
+huggingface-cli download tencent/Hunyuan3D-Part p3sam/p3sam.safetensors --local-dir C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\weights
 ```
+
+> Note : le fichier dans le repo HF est `p3sam/p3sam.safetensors` (sous-dossier), pas à la racine. Avec `--local-dir`, HF préserve la hiérarchie repo → tu obtiens `weights\p3sam\p3sam.safetensors`. Pour stocker sur D: : `--local-dir D:\hy3d-weights` ➜ fichier en `D:\hy3d-weights\p3sam\p3sam.safetensors`.
 
 ### ✅ Vérification §4.4
 
 ```cmd
-dir C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\weights\p3sam.safetensors
+dir C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\weights\p3sam\p3sam.safetensors
 ```
 
 Attendu : fichier listé, plusieurs centaines de Mo.
@@ -194,7 +196,7 @@ Attendu : fichier listé, plusieurs centaines de Mo.
 
 ```cmd
 cd C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\demo
-python auto_mask.py --ckpt_path ..\weights\p3sam.safetensors --mesh_path assets\1.glb --output_path results\1
+python auto_mask.py --ckpt_path ..\weights\p3sam\p3sam.safetensors --mesh_path assets\1.glb --output_path results\1
 ```
 
 ### ✅ Vérification §4.5
