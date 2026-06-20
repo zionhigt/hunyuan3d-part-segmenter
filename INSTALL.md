@@ -101,27 +101,44 @@ dir C:\Users\Shadow\Hunyuan3D-Part\P3-SAM\utils\chamfer3D\setup.py
 
 Attendu : les deux fichiers existent.
 
-### 4.2 Sonata (Facebook Research) — étape à risque
+### 4.2 Sonata — pas besoin du repo Facebook
 
-> **À traiter en dernier**. Sonata peut tirer `flash-attn` / `pointops` / `torch-scatter`, qui n'ont pas de wheel Windows officielle. Si ça bloque, **on ne tente pas de forcer**. Note l'erreur, on cherchera un fork Windows ou on neutralisera la dep si P3-SAM peut tourner sans.
+Bonne surprise : le code Sonata est **bundle** dans `Hunyuan3D-Part/XPart/partgen/models/sonata/`. Le README P3-SAM dit d'installer le repo `facebookresearch/sonata`, mais c'est trompeur — `model.py` du repo Tencent ajoute `XPart/partgen` au `sys.path` et fait `from models import sonata`, donc il utilise sa copie locale.
+
+**On évite donc** de cloner facebookresearch/sonata, **et surtout** d'installer `flash-attn` (pas de wheel Windows). À la place :
+
+1. **Installer les 2 deps natives de Sonata qui ont des wheels Windows** :
 
 ```cmd
 conda activate hy3d-part
-cd C:\Users\Shadow
-git clone https://github.com/facebookresearch/sonata.git
-cd sonata
-pip install -e . --no-build-isolation
+pip install spconv-cu124
+pip install torch-scatter -f https://data.pyg.org/whl/torch-2.5.1+cu124.html
 ```
+
+2. **Patcher le Sonata bundle pour désactiver `flash_attn`** (le fallback PyTorch standard est déjà implémenté dans `SerializedAttention.forward`, branche `if not self.enable_flash:`). Le patcher règle aussi un chemin Linux codé en dur (`/root/sonata`) dans `P3-SAM/model.py` :
+
+```cmd
+cd C:\Users\Shadow\hunyuan3d-part-segmenter
+python scripts\patch_hy3d_part.py
+```
+
+Sortie attendue :
+```
+[DONE] sonata/model.py: disable flash_attn: patched ...
+[DONE] P3-SAM/model.py: fix /root/sonata path: patched ...
+```
+
+(Si tu relances : `[OK] ... already patched`.)
 
 ### ✅ Vérification §4.2
 
 ```cmd
-python -c "import sonata; print(sonata.__file__)"
+python -c "import torch; import spconv.pytorch as spconv; import torch_scatter; print('spconv OK | torch_scatter', torch_scatter.__version__)"
 ```
 
-Attendu : chemin vers `C:\Users\Shadow\sonata\sonata\__init__.py`.
+Attendu : `spconv OK | torch_scatter <version>`.
 
-> Si erreur sur `flash-attn` ou autre dep C++ ➜ **arrête, colle l'erreur**. Options à explorer (je tranche selon le message) : wheels prebuilt (ex. `bdashore3/flash-attention` pour flash-attn Windows), version pinnée plus ancienne, ou patch Sonata.
+> Si `pip install spconv-cu124` ou `torch-scatter` casse ➜ colle l'erreur. Pour torch-scatter, l'index PyG cache un sous-dossier `torch-2.5.1+cu124` qui contient la wheel pour Python 3.10 Windows.
 
 ### 4.3 Build de `chamfer3D` (kernel CUDA, depuis le dev shell)
 
@@ -251,8 +268,9 @@ Tu dois voir un process Python qui consomme de la VRAM. Si VRAM à 0 et lenteur 
 | `cl.exe` ou `nvcc` introuvables au build chamfer3D | shell normal, pas `dev_shell.bat` | relancer `scripts\dev_shell.bat`, refaire le build dedans. |
 | Build chamfer3D : `unsupported MSVC` | MSVC 14.44 vs CUDA 12.4 — normalement OK, sinon installer Windows 11 SDK | refaire VS Installer, ajouter Windows 11 SDK. |
 | Build chamfer3D : longue liste de warnings puis OK | normal | ignorer warnings, vérifier l'import (§4.3 ✅). |
-| `import sonata` ➜ ModuleNotFoundError | §4.2 pas faite ou échouée | refaire §4.2 ; coller l'erreur si échec. |
-| Sonata `flash-attn` no wheel | dep C++ Windows | **arrêter**, m'envoyer le message exact — fork wheel à brancher. |
+| `ModuleNotFoundError: spconv` / `torch_scatter` au lancement de `auto_mask.py` | §4.2 pas faite | refaire §4.2 dans `(hy3d-part)`. |
+| `AssertionError: Make sure flash_attn is installed.` | patcher §4.2 pas appliqué | `python scripts\patch_hy3d_part.py`, vérifier `[DONE]` ou `[OK]` en sortie. |
+| `from models import sonata` ➜ `ModuleNotFoundError` | tu as cloné `facebookresearch/sonata` au lieu d'utiliser le bundle Tencent | le code Tencent utilise `XPart/partgen/models/sonata/`, pas le repo Facebook. Désinstalle `sonata` si tu l'avais : `pip uninstall sonata`. |
 | `P3-SAM script not found` au lancement de ce projet | mauvais `hy3d_part_root` | vérifier chemin dans `config.yaml`. |
 | `P3-SAM checkpoint not found` | §4.4 pas faite | refaire le `huggingface-cli download`. |
 | `OutOfMemoryError` | mesh trop dense | baisser `p3sam_point_num` dans `config.yaml`, décimer en amont. |
