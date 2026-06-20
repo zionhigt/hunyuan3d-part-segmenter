@@ -60,6 +60,20 @@ PATCH_SYSPATH_NEW = (
     "sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'XPart/partgen'))"
 )
 
+# Tencent left two hardcoded debug overrides at the top of mesh_sam() that
+# pin point_num=100000 / prompt_num=400 regardless of what the CLI flags
+# requested. The forward pass allocates a [point_num, prompt_bs, 1027] fp32
+# tensor (~25 GB at default values), causing OOM on a 20 GB GPU when
+# flash_attn is disabled. We comment them out so --point_num / --prompt_num
+# actually take effect.
+PATCH_AUTOMASK_OLD = """    point_num = 100000
+    prompt_num = 400"""
+
+PATCH_AUTOMASK_NEW = """    # Patched by hunyuan3d-part-segmenter: was forcing point_num=100000 /
+    # prompt_num=400 regardless of CLI flags. Let function parameters flow.
+    # point_num = 100000
+    # prompt_num = 400"""
+
 
 def patch_file(path: Path, old: str, new: str, label: str) -> str:
     if not path.is_file():
@@ -120,6 +134,12 @@ def main() -> int:
             PATCH_SYSPATH_OLD,
             PATCH_SYSPATH_NEW,
             "P3-SAM/model.py: sys.path.append -> insert(0)",
+        ),
+        patch_file(
+            root / "P3-SAM" / "demo" / "auto_mask.py",
+            PATCH_AUTOMASK_OLD,
+            PATCH_AUTOMASK_NEW,
+            "auto_mask.py: unhardcode point_num/prompt_num",
         ),
         ensure_init_py(
             root / "XPart" / "partgen" / "utils" / "__init__.py",
